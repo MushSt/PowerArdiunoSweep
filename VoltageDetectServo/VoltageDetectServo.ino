@@ -1,38 +1,43 @@
-
 /*
-AttoPilot Current and Voltage Sensing Demo
-N.Poole, Sparkfun Electronics, 2011
+  AttoPilot Current and Voltage Sensing Demo
+  N.Poole, Sparkfun Electronics, 2011
 
-"I don't care what you do with it, and neither does the script." (apathyware)
+  "I don't care what you do with it, and neither does the script." (apathyware)
 
-Physical Connections:
--------------------------
-Arduino  | Peripherals
--------- | --------------
-Pin 3  --- SerLCD "RX"
-Pin A0 --- AttoPilot "V"
-Pin A1 --- AttoPilot "I"
-GND ------ AttoPilot "GND"
-GND ------ SerLCD "GND"
-5V ------- SerLCD "VCC"
+  Physical Connections:
+  -------------------------
+  Arduino  | Peripherals
+  -------- | --------------
+  Pin 3  --- SerLCD "RX"
+  Pin A0 --- AttoPilot "V"
+  Pin A1 --- AttoPilot "I"
+  GND ------ AttoPilot "GND"
+  GND ------ SerLCD "GND"
+  5V ------- SerLCD "VCC"
 
-This demo will read the Voltage and Current from the "AttoPilot Voltage and Current Sense Board,"
-convert the raw ADC data to Volts and Amps and display them as floating point numbers on the
-Serial Enabled LCD. (If you would like to do without the Serial LCD, I have included commented code
-for reading the results through the Serial Terminal.)
+  This demo will read the Voltage and Current from the "AttoPilot Voltage and Current Sense Board,"
+  convert the raw ADC data to Volts and Amps and display them as floating point numbers on the
+  Serial Enabled LCD. (If you would like to do without the Serial LCD, I have included commented code
+  for reading the results through the Serial Terminal.)
 
 */
 
 #include <Servo.h>
+#include <LinkedList.h>
 
 int VRaw; //This will store our raw ADC data
 int IRaw;
 float VFinal; //This will store the converted data
 float IFinal;
 //angle of the Servo
+
+//Constants:
 const int start = 35;
 const int finish = 180;
-const int flatline = 125; //temp var for perfectly flat 
+const int flatline = 125; //temp var for perfectly flat
+const int stepSize = 5; //for calibration
+const int sampleSize = 7; 
+const int movementPause = 250;
 
 //delay constant
 const int delayTime = 1000;
@@ -52,175 +57,190 @@ void setup() {
   tilt.attach(11);
   pan.attach(10);
 
-  //give servo default values, starts at 900 and ends at 2100
-  pan.write(flatline);
-  delay(15);
-  tilt.write(170);
-  delay(15);
+  //calibrate the best position, sweep 2x for redundancy
+  calibrateTilt();
+  calibratePan();
+  calibrateTilt();
+  calibratePan();
 }
 
+//*****************MAIN_LOOP********************
+void loop() {
 
-void loop() { 
-  //Cleanup for LCD (Don't include this line if you are 
-  //using a serial terminal instead.
-
-  float currPower = calcPower();
   
-  updatePosition(currPower);
-
-  //using only voltage:
-
-
+  
   delay(delayTime);
 
   /*
-  //Alternate Display code for terminal.
-  If you wish to use the terminal instead of an
-  LCD, use this display code instead of the above.
-  
-  Serial.print(VFinal);
-  Serial.println("   Volts");
-  Serial.print(IFinal);
-  Serial.println("   Amps");
-  Serial.println("");
-  Serial.println("");
-  delay(200);
-  
+    //Alternate Display code for terminal.
+    If you wish to use the terminal instead of an
+    LCD, use this display code instead of the above.
+
+    Serial.print(VFinal);
+    Serial.println("   Volts");
+    Serial.print(IFinal);
+    Serial.println("   Amps");
+    Serial.println("");
+    Serial.println("");
+    delay(200);
+
   */
 }
 
-//**********************UPDATEONVOLTAGE**********************
+//**********************CALIBRATE_TILT****************
 /*
- * updates the position based on the voltage reading
- */
-void updateOnVoltage(float currVoltage) {
-  int currAngle = tilt.read();
-  float nextVoltage; //for use in the loops
-   
-  tilt.write(currAngle+1); //increase the angle to check if its the right direction
-  delay(1000);
-  int upVoltage = getVoltage();
+   does the initial calibration of the tilt servo
 
-  //end points
-  if(upVoltage > currVoltage) {
-    nextVoltage = upVoltage;
-    Serial.print("going up");
-    for(int i = currAngle; i < finish; ++i) {
-      //move to next point
-      tilt.write(i);
-      delay(1000);
-      currVoltage = nextVoltage;
-      nextVoltage = getVoltage();
+   Full sweep of the servo's range stored in a list
+   move to optimal position
+*/
+void calibrateTilt() {
+  LinkedList<float> powerData = LinkedList<float>();
 
-      //stopping condition
-      if(nextVoltage < currVoltage) {
-        tilt.write(--i); //move back and stop
-        break;
-      }
-    }
+  //get raw data and populate the list
+  for(int i = start; i < finish; ++i) {
+    tilt.write(i);
+    delay(movementPause);
+    powerData.add(calcPower());
   }
-  else if(upVoltage < currVoltage){
-    nextVoltage = upVoltage;
-    for(int i = currAngle; i > start; --i) {
-      //move to next point
-      tilt.write(i);
-      delay(1000);
-      currVoltage = nextVoltage;
-      nextVoltage = getVoltage();
 
-      //stopping condition;
-      if(nextVoltage < currVoltage) {
-        tilt.write(++i);
-        Serial.print("breaking\n");
-        break;
-      }
-    }
-  }
-  else {
-    Serial.print("do nothing/done");
-  }
+  //smooth the raw data out to find the best position
+  int bestIndex = smoothData(powerData);
+  tilt.write(bestIndex + start); //optimum position
 }
- 
 
-//***********************UPDATEPOSITION***********************
+//**********************CALIBRATE_PAN*****************
 /*
- * updates the position given the current Power
+   does the initial calibration of the pan servo
+
+   Full sweep of servo's range stored in a list
+   move to optimal position
  */
-void updatePosition(float currPower) {
-  int currAngle = tilt.read();
-  boolean goUp = checkUpAngle(currPower, currAngle);
+void calibratePan() {
+  LinkedList<float> powerData = LinkedList<float>();
 
-  //end points
-  if(goUp) {
-    Serial.print("going up\n");
-    float nextPower = currPower;
-    for(int i = currAngle; i < finish; ++i) {
-      //move to next point
-      tilt.write(i);
-      delay(1000);
-      currPower = nextPower;
-      nextPower = calcPower();
-
-      //stopping condition
-      if(nextPower < currPower) {
-        tilt.write(--i); //move back and stop
-        break;
-      }
-    }
-  }
-  else {
-    Serial.print("going down\n");
-    float nextPower = currPower;
-    for(int i = currAngle; i > start; --i) {
-      //move to next point
-      tilt.write(i);
-      delay(1000);
-      currPower = nextPower;
-      nextPower = calcPower();
-
-      //stopping condition;
-      if(nextPower < currPower) {
-        tilt.write(++i);
-        break;
-      }
-    }
+  //get raw data and populate the list
+  for(int i = start; i < finish; ++i) {
+    pan.write(i);
+    delay(movementPause);
+    powerData.add(calcPower());
   }
 
+  //smooth raw data
+  int bestIndex = smoothData(powerData);
+  pan.write(bestIndex + start);
+}
+
+//**********************SMOOTH_DATA*******************
+/*
+ * Applies a mean filter to smooth out the data
+ * returns the index of the peak
+ */
+int smoothData(LinkedList<float> rawData) {
+  LinkedList<float> sample = LinkedList<float>(); //sublist to get an average
+  LinkedList<float> smoothedData = LinkedList<float>(); //to hold the smoothed data
+
+  int dataSize = rawData.size();
+  int offset = sampleSize/2;
+
+  //pad the smoothed data with 0s to represent the thrown away vals
+  for(int i = 0; i < offset*2; ++i) {
+    smoothedData.add(0);
+  }
+
+  //ignore the starting vals
+  for(int i = offset; i < dataSize-offset; ++i) {
+    for(int j = i - offset; j < sampleSize; ++j) {
+      //populate the sample
+      sample.add(rawData.get(j));
+    }
+    //sample has been populated, get the mean and place it into smoothed list
+    float smoothed = getMedian(sample);
+    smoothedData.add(i, smoothed);
+  }
+
+  //find the max value, and in the event there is a plateau, take the middle one
+  float maxVal = smoothedData.get(0);
+  int maxIndex = 0;
   
-}
-//**********************CHECKUPANGLE******************
-/*
- * checks if increasing the angle is the correct
- * direction
- */
-boolean checkUpAngle(float currPower, int currAngle) {
-  tilt.write(currAngle + 1);
-  float checkPower = calcPower();
+  for(int i = 0; i < dataSize; ++i) {
+    float nextVal = smoothedData.get(i);
+    if(nextVal > maxVal) {
+      maxVal = nextVal;
+      maxIndex = i;
+    }
+  }
 
-  return checkPower > currPower;
+  return maxIndex;
+}
+
+//**********************GET_MEDIAN*****************
+/*
+ * calculates and returns the median of a list
+ */
+float getMedian(LinkedList<float> sublist) {
+  //sort into new list
+  int listSize = sublist.size();
+  LinkedList<float> sorted = LinkedList<float>();
+  
+  //sort the list
+  for(int i = 0; i < listSize; ++i) {
+    int sortedSize = sorted.size();
+    float nextVal = sublist.pop();
+    
+    //inner loop to place removed element 
+    for(int j = 0; j < sortedSize; ++j) {
+      //reached the end of the list
+      if(j == sortedSize-1) {
+        sorted.add(nextVal);
+      }
+      //place the value if its less than the next element
+      if(nextVal < sorted.get(j)) {
+        sorted.add(j, nextVal);
+      }
+    }
+  }
+
+  return sorted.get(listSize/2);
+}
+
+
+//**********************GET_MEAN*******************
+/*
+ * calculates and returns the mean of a list
+ */
+float getMean(LinkedList<float> sublist) {
+  int sizeOfList = sublist.size();
+  float mean = 0;
+
+  for(int i = 0; i < sizeOfList; ++i) {
+    mean += sublist.pop();
+  }
+
+  return mean/sizeOfList;
 }
 
 //**********************CALCPOWER*********************
 /*
- * function to calculate the power
- */
+   function to calculate the power
+*/
 float calcPower() {
   return getVoltage() * getCurrent();
 }
 
 //**********************GETVOLTAGE*********************
 /*
- * function to get the voltage
- */
+   function to get the voltage
+*/
 float getVoltage() {
   float voltage = 0;
   //analogRead(volt);
 
-  for(int i = 0; i < 4; ++i) {
+  for (int i = 0; i < 5; ++i) {
     voltage += analogRead(volt);
-    delay(500);
+    delay(100);
   }
-  voltage = voltage/4;
+  voltage = voltage / 5;
 
   //Conversion
   //voltage = voltage/49.44; //45 Amp board
@@ -229,21 +249,21 @@ float getVoltage() {
 
   Serial.print(voltage);
   Serial.print("\n");
-    
+
   return voltage;
 }
 
 //**********************GETCURRENT*********************
 /*
- * function to get the current
- */
+   function to get the current
+*/
 float getCurrent() {
   float current = analogRead(curr);
 
   //current = current/14.9; //45 Amp board
   //IFinal = IRaw/7.4; //90 Amp board
   //IFinal = IRaw/3.7; //180 Amp board
-  
+
   return 10;
 }
 
