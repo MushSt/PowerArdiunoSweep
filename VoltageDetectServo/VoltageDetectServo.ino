@@ -1,43 +1,17 @@
-/*
-  AttoPilot Current and Voltage Sensing Demo
-  N.Poole, Sparkfun Electronics, 2011
-
-  "I don't care what you do with it, and neither does the script." (apathyware)
-
-  Physical Connections:
-  -------------------------
-  Arduino  | Peripherals
-  -------- | --------------
-  Pin 3  --- SerLCD "RX"
-  Pin A0 --- AttoPilot "V"
-  Pin A1 --- AttoPilot "I"
-  GND ------ AttoPilot "GND"
-  GND ------ SerLCD "GND"
-  5V ------- SerLCD "VCC"
-
-  This demo will read the Voltage and Current from the "AttoPilot Voltage and Current Sense Board,"
-  convert the raw ADC data to Volts and Amps and display them as floating point numbers on the
-  Serial Enabled LCD. (If you would like to do without the Serial LCD, I have included commented code
-  for reading the results through the Serial Terminal.)
-
-*/
 
 #include <Servo.h>
 #include <LinkedList.h>
 
-int VRaw; //This will store our raw ADC data
-int IRaw;
-float VFinal; //This will store the converted data
-float IFinal;
 //angle of the Servo
 
 //Constants:
-const int start = 35;
+const int start = 55;
 const int finish = 180;
 const int flatline = 125; //temp var for perfectly flat
-const int stepSize = 5; //for calibration
+const int stepSize = 1; //for calibration
 const int sampleSize = 7; 
-const int movementPause = 250;
+const int movementPause = 50;
+const int deviceMovement = 250; //for large movements
 
 //delay constant
 const int delayTime = 1000;
@@ -49,6 +23,10 @@ Servo tilt, pan;
 int volt = A0;
 int curr = A1;
 
+
+LinkedList<float> powerData;
+LinkedList<float> smoothedData;
+
 void setup() {
 
   Serial.begin(9600);
@@ -58,10 +36,10 @@ void setup() {
   pan.attach(10);
 
   //calibrate the best position, sweep 2x for redundancy
-  calibrateTilt();
-  calibratePan();
-  calibrateTilt();
-  calibratePan();
+  calibrate(pan);
+  calibrate(tilt);
+  powerData.clear();
+
 }
 
 //*****************MAIN_LOOP********************
@@ -87,48 +65,35 @@ void loop() {
   */
 }
 
-//**********************CALIBRATE_TILT****************
+//**********************CALIBRATE****************
 /*
    does the initial calibration of the tilt servo
 
    Full sweep of the servo's range stored in a list
    move to optimal position
 */
-void calibrateTilt() {
-  LinkedList<float> powerData = LinkedList<float>();
+void calibrate(Servo device) {
+  powerData = LinkedList<float>();
+  device.write(start);
+  delay(deviceMovement);
 
   //get raw data and populate the list
-  for(int i = start; i < finish; ++i) {
-    tilt.write(i);
+  for(int i = start; i < finish; i += stepSize) {
+    device.write(i);
     delay(movementPause);
-    powerData.add(calcPower());
+    float pwr = calcPower();
+    powerData.add(pwr);
+    //Serial.println(pwr);
   }
 
   //smooth the raw data out to find the best position
+  Serial.println("Smoothing data...");
   int bestIndex = smoothData(powerData);
-  tilt.write(bestIndex + start); //optimum position
-}
-
-//**********************CALIBRATE_PAN*****************
-/*
-   does the initial calibration of the pan servo
-
-   Full sweep of servo's range stored in a list
-   move to optimal position
- */
-void calibratePan() {
-  LinkedList<float> powerData = LinkedList<float>();
-
-  //get raw data and populate the list
-  for(int i = start; i < finish; ++i) {
-    pan.write(i);
-    delay(movementPause);
-    powerData.add(calcPower());
-  }
-
-  //smooth raw data
-  int bestIndex = smoothData(powerData);
-  pan.write(bestIndex + start);
+  Serial.println("Best index is:");
+  device.write(bestIndex + start); //optimum position
+  delay(deviceMovement);
+  
+  Serial.println(bestIndex + start);
 }
 
 //**********************SMOOTH_DATA*******************
@@ -137,9 +102,12 @@ void calibratePan() {
  * returns the index of the peak
  */
 int smoothData(LinkedList<float> rawData) {
-  LinkedList<float> sample = LinkedList<float>(); //sublist to get an average
-  LinkedList<float> smoothedData = LinkedList<float>(); //to hold the smoothed data
-
+  smoothedData = LinkedList<float>(); //to hold the smoothed data
+  LinkedList<float> sample;
+  
+  Serial.print("Data size"); 
+  Serial.println(rawData.size());
+  
   int dataSize = rawData.size();
   int offset = sampleSize/2;
 
@@ -149,14 +117,23 @@ int smoothData(LinkedList<float> rawData) {
   }
 
   //ignore the starting vals
+  Serial.println(offset);
+  Serial.println(dataSize-offset);
   for(int i = offset; i < dataSize-offset; ++i) {
-    for(int j = i - offset; j < sampleSize; ++j) {
+    sample = LinkedList<float>(); //sublist to get an average
+    for(int j = i - offset; j < i+offset; ++j) {
       //populate the sample
-      sample.add(rawData.get(j));
+      float particle = rawData.get(j);
+      sample.add(particle);
     }
     //sample has been populated, get the mean and place it into smoothed list
-    float smoothed = getMedian(sample);
+    float smoothed = getMean(sample);
+    Serial.print("smoothed data point: " );
+    Serial.print(smoothed);
+    Serial.print(" ");
+    Serial.println(i);
     smoothedData.add(i, smoothed);
+    Serial.println(smoothedData.size());
   }
 
   //find the max value, and in the event there is a plateau, take the middle one
@@ -171,7 +148,9 @@ int smoothData(LinkedList<float> rawData) {
     }
   }
 
-  return maxIndex;
+  Serial.println(maxIndex);
+  Serial.println(maxVal);
+  return maxIndex + offset;
 }
 
 //**********************GET_MEDIAN*****************
@@ -236,19 +215,16 @@ float getVoltage() {
   float voltage = 0;
   //analogRead(volt);
 
+  /*
   for (int i = 0; i < 5; ++i) {
     voltage += analogRead(volt);
     delay(100);
   }
   voltage = voltage / 5;
+  */
+  voltage = analogRead(volt)*(5.0/1024.0);
 
-  //Conversion
-  //voltage = voltage/49.44; //45 Amp board
-  //VFinal = VRaw/12.99; //90 Amp board
-  //VFinal = VRaw/12.99; //180 Amp board
-
-  Serial.print(voltage);
-  Serial.print("\n");
+  Serial.println(voltage);
 
   return voltage;
 }
@@ -258,12 +234,10 @@ float getVoltage() {
    function to get the current
 */
 float getCurrent() {
-  float current = analogRead(curr);
 
-  //current = current/14.9; //45 Amp board
-  //IFinal = IRaw/7.4; //90 Amp board
-  //IFinal = IRaw/3.7; //180 Amp board
+  //Serial.print("current: ");
+  //Serial.println(current);
 
-  return 10;
+  return 1;
 }
 
