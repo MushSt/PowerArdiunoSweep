@@ -1,5 +1,4 @@
 #include <Servo.h>
-#include <LinkedList.h>
 
 /* Specs:
 less fluctuating voltage readings
@@ -45,7 +44,7 @@ void setup() {
   //calibrate?
   calibrate(pan);
   calibrate(tilt);
-  
+
 }
 
 //**** Main Loop ****
@@ -79,7 +78,7 @@ void calibrate(Servo device) {
 
   //data smoothing part
   //choose from 3 smoothing methods: 0median(H), 1mean(E/M), 2threshold(E/M)
-  int bestIndex = chooseSmoothingMethod(1, data, idx);
+  int bestIndex = chooseSmoothingMethod(0, data, idx);
 
   device.write(bestIndex + start + lag_step);
   delay(movement_pause);
@@ -118,36 +117,111 @@ int meanSmoothing(float data[], int dataSize) {
 }
 
 int medianSmoothing(float data[], int dataSize) {
+  //throw away first (lag_step - 1) data samples
+  int offset = sample_size/2;
+  float smoothedData[dataSize - 2*offset];
 
+  for(int i = offset; i < dataSize - offset; ++i) {
+    float dataSample[sample_size];
+
+    //populate the sample
+    int index = 0;
+    for(int j = i-offset; j <= i+offset; ++j) {
+      dataSample[index++] = data[j];
+    }
+
+    float sampleMean = calcMedian(dataSample);
+    smoothedData[i-offset] = sampleMean;
+  }
+  int bestIndex = getMaxIndex(smoothedData, dataSize - 2*offset);
+
+  return bestIndex + offset;
 }
 
+
 int thresholdSmoothing(float data[], int dataSize) {
-  
+  //first split the data into blocks (sample_size)
+  int numBlocks = dataSize/sample_size;
+  float block[sample_size];
+
+  for(int i = 0; i < numBlocks; ++i) {
+    for(int j = 0; j < sample_size; ++j) {
+      block[j] = data[i*sample_size + j];
+    }
+    float mean = calcMean(block);
+    float range = calcThreshold(block, mean);
+
+    //overwrite the ones that are over the range into the mean
+    for(int j = 0; j < sample_size; ++j) {
+      if(block[j] > mean+range || block[j] < mean-range) {
+        block[j] = mean; //throw out the outliers by making them equal the average
+        //overwrite original data
+        data[i*sample_size+j] = block[j];
+      }
+    }
+
+    return getMaxIndex(data, dataSize);
+  }
 }
 
 
 //**** Helper functions ********
-float calcThreshold(float dataBlock[]) {
+float calcThreshold(float dataBlock[], float mean) {
   //threshold algorithm: get average and standard dev
   //get a range based on that (mean +- range)
   //returns the range, cut out all things greater than the value range
+  float multiplier = 0.3;
+
+  float std = calcStandardDev(dataBlock, mean);
+
+  return std*multiplier;
+}
+
+float calcStandardDev(float dataBlock[], float mean) {
+  float sum = 0;
+  for(int i = 0; i < sample_size; ++i) {
+    sum += (dataBlock[i] - mean) * (dataBlock[i] - mean);
+  }
+  sum = sum / sample_size;
+  sum = sqrt(sum);
+
+  return sum;
 }
 
 float calcMean(float dataBlock[]) {
   //size is assumed to be equal to sample_size
   float sum = 0;
-  int sampleSize = sizeof(dataBlock);
 
   for(int i = 0; i < sample_size; ++i) {
     sum += dataBlock[i];
-  }  
+  }
 
   return sum/sample_size;
 }
 
 // calculates the median
 float calcMedian(float dataBlock[]) {
+  //TODO, assume dataBlock size is sample_size
+  float temp;
+  // sorts array (ascending)
+  for(int i = 0; i < sample_size-1; i++) {
+      for(int j = i+1; j < sample_size; j++) {
+          if(dataBlock[j] < dataBlock[i]) {
+              // swap elements
+              temp = dataBlock[i];
+              dataBlock[i] = dataBlock[j];
+              dataBlock[j] = temp;
+          }
+      }
+  }
 
+  if(sample_size%2==0) {
+      return((dataBlock[sample_size/2] + dataBlock[sample_size/2 - 1]) / 2.0);
+  }
+  else {
+      // else return the element in the middle
+      return dataBlock[sample_size/2];
+  }
 }
 
 // Gets the maximum index in an array
@@ -184,11 +258,11 @@ float getVoltage() {
 
 //**** WRAPPER METHOD ******
 int chooseSmoothingMethod(int choice, float data[], int dataSize) {
-  int bestIndex; 
+  int bestIndex;
   switch(choice) {
     case 0:
       return medianSmoothing(data, dataSize);
-    case 1: 
+    case 1:
       return meanSmoothing(data, dataSize);
     case 2:
       return thresholdSmoothing(data, dataSize);
@@ -198,4 +272,3 @@ int chooseSmoothingMethod(int choice, float data[], int dataSize) {
   }
   return 0;
 }
-
