@@ -34,6 +34,11 @@ Servo tilt, pan;
 int voltage = A0;
 int current = A1;
 
+//instance variables
+int check_direction;
+boolean firstCheck;
+boolean up;
+
 void setup() {
   Serial.begin(9600);
 
@@ -45,12 +50,28 @@ void setup() {
   calibrate(pan);
   calibrate(tilt);
 
+  check_direction = 1;
+  firstCheck = true;
+  up = true; //keep track of direction to minimize errors
 }
 
 //**** Main Loop ****
 void loop() {
-  //checkUp();
-  //checkDown();
+  if(firstCheck) {
+    firstCheck = false;
+    up = updatePosition(tilt, check_direction);
+    if(!up) {
+      check_direction = -check_direction;
+      updatePosition(tilt, check_direction); //move back to original position
+    }
+  }
+  else {
+    if(!updatePosition(tilt, check_direction)) {
+      check_direction = -check_direction;
+      updatePosition(tilt, check_direction);
+    }
+  }
+
   delay(200000);
 }
 
@@ -85,12 +106,17 @@ void calibrate(Servo device) {
 }
 
 //**** check and movement after calibration ********
-void checkUP(Servo device) {
+boolean updatePosition(Servo device, int direction) {
+  //algorithm is to do sample_size of successive reads on voltage
+  //and then use the median filter on that reading
+  float currentVoltage = calcCurrVoltage();
 
-}
+  int currentAngle = device.read();
+  device.write(currentAngle + direction); //increment the angle up or down by 1
 
-void checkDown(Servo device) {
+  float updateVoltage = calcCurrVoltage();
 
+  return updateVoltage > currentVoltage;
 }
 
 //**** Data Smoothing Functions *****
@@ -166,6 +192,15 @@ int thresholdSmoothing(float data[], int dataSize) {
 
 
 //**** Helper functions ********
+float calcCurrVoltage() {
+  float voltageReadings[sample_size];
+  for(int i = 0; i < sample_size; ++i) {
+    voltageReadings[i] = getVoltage();
+  }
+  float currentVoltage = calcMedian(voltageReadings);
+  return currentVoltage;
+}
+
 float calcThreshold(float dataBlock[], float mean) {
   //threshold algorithm: get average and standard dev
   //get a range based on that (mean +- range)
