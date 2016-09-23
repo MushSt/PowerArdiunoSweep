@@ -57,22 +57,50 @@ void setup() {
 
 //**** Main Loop ****
 void loop() {
-  if(firstCheck) {
-    firstCheck = false;
-    up = updatePosition(tilt, check_direction);
-    if(!up) {
-      check_direction = -check_direction;
-      updatePosition(tilt, check_direction); //move back to original position
-    }
+
+  //7 degree sweep
+  int filterSize = 5; //we can do a filter of size 5 if we're only comparing 3
+  float sweepData[sample_size];
+  float filter[filterSize]
+  int angle = tilt.read();
+  int counter = 0;
+  int offset = sample_size/2;
+
+  for(int i = angle - offset; i <= angle + offset; ++i) {
+    tilt.write(i); //change the servo to the angle in question
+    delay(movement_pause);
+    sweepData[counter] = getVoltage();
   }
-  else {
-    if(!updatePosition(tilt, check_direction)) {
-      check_direction = -check_direction;
-      updatePosition(tilt, check_direction);
+
+  float finalData[3];
+  for(int i = 0; i < 3; ++i) {
+    for(int j = 0; j < filterSize; ++j) {
+      filter[j] = sweepData[i+j];
+      finalData[i] = medianSmoothing(filter, 5);
     }
   }
 
-  delay(200000);
+  int index = getMaxIndex(finalData, 3);
+
+  tilt.write(angle + index - 1);
+
+
+  // if(firstCheck) {
+  //   firstCheck = false;
+  //   up = updatePosition(tilt, check_direction);
+  //   if(!up) {
+  //     check_direction = -check_direction;
+  //     updatePosition(tilt, check_direction); //move back to original position
+  //   }
+  // }
+  // else {
+  //   if(!updatePosition(tilt, check_direction)) {
+  //     check_direction = -check_direction;
+  //     updatePosition(tilt, check_direction);
+  //   }
+  // }
+
+  delay(20000);
 }
 
 // Initial Calibration
