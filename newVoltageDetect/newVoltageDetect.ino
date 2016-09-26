@@ -26,6 +26,7 @@ const int step_pause = 50;
 const int loop_delay = 10000;
 
 const float conversion_factor = (5.0/1024.0);
+const float divider_value = 6/5;
 
 // Servo Objects:
 Servo tilt, pan;
@@ -34,55 +35,42 @@ Servo tilt, pan;
 int voltage = A0;
 int current = A1;
 
-//instance variables
-int check_direction;
-boolean firstCheck;
-boolean up;
 
 void setup() {
   Serial.begin(9600);
 
   //attach servo objects to the respective pins
   tilt.attach(11);
+  tilt.write(65);
   pan.attach(10);
 
   //calibrate?
   calibrate(pan);
   calibrate(tilt);
-
-  check_direction = 1;
-  firstCheck = true;
-  up = true; //keep track of direction to minimize errors
 }
 
 //**** Main Loop ****
 void loop() {
 
-  //7 degree sweep
-  int filterSize = 5; //we can do a filter of size 5 if we're only comparing 3
-  float sweepData[sample_size];
-  float filter[filterSize]
+  //small degree sweep
+  float sweepData[11];
   int angle = tilt.read();
   int counter = 0;
-  int offset = sample_size/2;
+  int offset = 11/2;
+
+  Serial.println(angle);
 
   for(int i = angle - offset; i <= angle + offset; ++i) {
     tilt.write(i); //change the servo to the angle in question
-    delay(movement_pause);
+    delay(3*movement_pause);
     sweepData[counter] = getVoltage();
+    Serial.println(sweepData[counter]);
+    counter++;
   }
 
-  float finalData[3];
-  for(int i = 0; i < 3; ++i) {
-    for(int j = 0; j < filterSize; ++j) {
-      filter[j] = sweepData[i+j];
-      finalData[i] = medianSmoothing(filter, 5);
-    }
-  }
-
-  int index = getMaxIndex(finalData, 3);
-
-  tilt.write(angle + index - 1);
+  int index = medianSmoothing(sweepData, 11);
+  Serial.println(index);
+  tilt.write(angle + index - (4));
 
 
   // if(firstCheck) {
@@ -100,7 +88,7 @@ void loop() {
   //   }
   // }
 
-  delay(20000);
+  delay(2000);
 }
 
 // Initial Calibration
@@ -170,6 +158,7 @@ int meanSmoothing(float data[], int dataSize) {
   return bestIndex + offset;
 }
 
+//put in the entire array
 int medianSmoothing(float data[], int dataSize) {
   //throw away first (lag_step - 1) data samples
   int offset = sample_size/2;
@@ -310,7 +299,7 @@ float getVoltage() {
   float volts = analogRead(voltage);
   //volts = volts * conversion_factor;
 
-  volts = volts * conversion_factor;
+  volts = volts * conversion_factor * divider_value;
 
   //*optional printing
   //Serial.println(volts);
